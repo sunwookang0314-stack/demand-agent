@@ -1,0 +1,8 @@
+.venv/
+.env
+__pycache__/
+data/raw/
+# 협업사 판매 데이터와 그 가공물은 절대 올리지 않는다 (지표 수치만 공개)
+data/private/
+out/private/
+.claude/
