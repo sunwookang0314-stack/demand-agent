@@ -21,6 +21,7 @@ LOTTE AX Challenge 2026 과제 4(롯데케미칼 첨단소재 수요예측 AI �
 |---|---|
 | 새 평가 질문 10개 | 커밋 [e92586f](https://github.com/sunwookang0314-stack/demand-agent/commit/e92586fd9108c728d952a7a5fa2071700f064b85)(11/2 14:57 푸시)의 `src/evaluate.py` HOLDOUT. 결과는 그 뒤 커밋 [23389f9](https://github.com/sunwookang0314-stack/demand-agent/commit/23389f95efca4618f5b9eba0798e53ee476fc872)의 `out/eval_holdout.csv` |
 | 2026년 10~12월 예측 | 커밋 [da5a93b](https://github.com/sunwookang0314-stack/demand-agent/commit/da5a93b017e8b9c069d08904d70e7e2edfa4b671)(11/2 13:27)의 `out/forecast_2026Q4.csv`, sha256 `50ef94c1d4a00fe2a278c407f1c6ed51cbf091818329c4396ae8f47e16819633`. 관세청 10월 자료가 나오면 이 파일 그대로 채점합니다 |
+| GitHub 서버의 푸시 시각 | [저장소 활동 기록](https://github.com/sunwookang0314-stack/demand-agent/activity). 커밋 시각은 작성자가 바꿀 수 있지만 이 시각은 GitHub 서버가 남깁니다. da5a93b 11/2 13:27:34, e92586f 14:57:59, 23389f9 15:01:00. 새 질문 첫 실행은 `out/agent_log.jsonl` 기준 14:58:09로 e92586f 푸시 뒤입니다 |
 | 과거 구간 시험 규칙 | LOG.md 2026-11-02 첫 줄(00:57 기록, 01:22 실행). 커밋은 결과와 함께 da5a93b에 들어갔고, 이 커밋의 `src/holdout.py`를 다시 돌리면 같은 결과 파일이 나옵니다 |
 
 `.gitattributes`에서 CSV를 바이트 그대로 저장하게 해 두어서 어느 OS에서 받아도 sha256이 같습니다.
