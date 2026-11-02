@@ -1,0 +1,8 @@
+pandas==2.3.3
+numpy==2.5.4
+statsforecast==2.1.1
+lightgbm==4.7.0
+openai-agents==0.24.0
+requests==2.34.2
+python-dotenv==1.2.4
+defusedxml==0.7.1
