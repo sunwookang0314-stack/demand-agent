@@ -9,7 +9,8 @@ fc = agent.record(led, agent.forecast_text("ABS"))
 acc = agent.record(led, agent.accuracy_text("ABS"))
 
 # 고정 예측 파일과 같은 숫자를 내는가 (LOG.md 2026-11-02)
-for s in ["2026-10: 59,973톤", "2026-11: 57,711톤", "2026-12: 56,363톤"]:
+for s in ["2026-10: 59,973톤", "2026-11: 57,711톤", "2026-12: 56,363톤",
+          "10월 예측 59,973톤보다 2,262톤 적음", "즉 52,025톤~60,701톤"]:  # 범위·직전 달 차이도 도구가 계산해 준다
     assert s in fc, s
 assert "18번" in acc and "이기지 못해" not in acc
 assert "경계선" in agent.accuracy_text("PC").splitlines()[2]  # 과거 구간 PC: 구간 끝이 0 근처

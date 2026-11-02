@@ -103,12 +103,16 @@ def forecast_text(product):
     tot = fc.groupby("ds")[["Combo", "AutoETS", "LGBM"]].sum()
     lines = [f"{product} 월별 수출 예측(관세청 15개국 합계, 기준 시점 {fc['cutoff'].iloc[0]:%Y-%m}, "
              "최종 예측 = AutoETS와 LightGBM의 평균)"]
+    # 범위 끝값·직전 달 대비 차이도 여기서 계산해 준다(새 질문 평가에서 에이전트가 이걸 직접 계산하다 가드레일에 막혔다)
+    prev_name, prev = f"직전 달 실적({act.index[-1]:%Y-%m})", act.iloc[-1]
     for h, (ds, r) in enumerate(tot.iterrows(), 1):
-        last = act[ds - pd.DateOffset(years=1)]
-        e = lad.loc[str(h), "wape_total"]
-        lines.append(f"- {ds:%Y-%m}: {_t(r['Combo'])} (AutoETS {_t(r['AutoETS'])}, LightGBM {_t(r['LGBM'])}). "
-                     f"작년 같은 달 실적 {_t(last)}보다 {_p(abs(r['Combo'] / last - 1))} {'많음' if r['Combo'] >= last else '적음'}. "
-                     f"{h}개월 앞 예측의 평가 구간 평균 오차 {_p(e)}를 적용한 폭 ±{_t(r['Combo'] * e)}(신뢰구간 아님)")
+        c, last, e = r["Combo"], act[ds - pd.DateOffset(years=1)], lad.loc[str(h), "wape_total"]
+        lines.append(f"- {ds:%Y-%m}: {_t(c)} (AutoETS {_t(r['AutoETS'])}, LightGBM {_t(r['LGBM'])}). "
+                     f"작년 같은 달 실적 {_t(last)}보다 {_p(abs(c / last - 1))} {'많음' if c >= last else '적음'}. "
+                     f"{prev_name} {_t(prev)}보다 {_t(abs(c - prev))} {'많음' if c >= prev else '적음'}. "
+                     f"{h}개월 앞 예측의 평가 구간 평균 오차 {_p(e)}를 적용한 폭 ±{_t(c * e)}, "
+                     f"즉 {_t(c * (1 - e))}~{_t(c * (1 + e))}(신뢰구간 아님)")
+        prev_name, prev = f"{ds:%m}월 예측", c
     total = tot["Combo"].sum()
     top = fc.groupby("unique_id")["Combo"].sum().nlargest(5)
     lines += [f"- 3개월 합계: {_t(total)}",
@@ -198,7 +202,7 @@ def publish(product, month, qty_t, reason, path=OUT / "approved_plans.csv"):
     f = fc[fc["unique_id"].str.startswith(product + "|") & (fc["ds"] == pd.Timestamp(month + "-01"))]["Combo"].sum()
     gap = qty / f - 1
     msg = (f"담당자 승인을 받아 기록했다: {product} {month} 계획 {_t(qty)}(예측 {_t(f)}보다 {_p(abs(gap))} {'많음' if gap >= 0 else '적음'}), "
-           f"사유: {reason}, 파일: {path}" + (" / 예측과 50% 넘게 차이 나니 사유를 다시 확인할 것" if abs(gap) > 0.5 else ""))
+           f"사유: {reason}" + (" / 예측과 50% 넘게 차이 나니 사유를 다시 확인할 것" if abs(gap) > 0.5 else ""))
     safe = "'" + reason if reason[0] in "=+-@" else reason  # 엑셀에서 열 때 수식으로 실행되지 않게
     pd.DataFrame([{"saved_at": datetime.now().isoformat(timespec="seconds"), "product": product, "month": month,
                    "plan_t": qty, "forecast_t": round(f), "reason": safe}]).to_csv(
@@ -295,7 +299,8 @@ async def numbers_from_tools(ctx: RunContextWrapper[Ledger], agent: Agent, outpu
 INSTRUCTIONS = """너는 롯데케미칼 첨단소재(ABS·PC) 수요계획 담당자를 돕는 에이전트다.
 규칙:
 1. 숫자는 반드시 도구를 불러서 얻고, 도구가 준 표기 그대로 옮긴다. 반올림·단위 변환(예: 만 톤)은 하지 않는다.
-   합이나 차가 필요하면 직접 계산하지 말고 calculate를 부른다. 그 밖에 도구로 얻을 수 없는 숫자는
+   합이나 차가 필요하면 직접 계산하지 말고 calculate를 부른다. 범위 끝값이나 설명 중에 곁들이는 차이도 마찬가지다.
+   그 밖에 도구로 얻을 수 없는 숫자는
    "도구에 없는 숫자라 답하지 않는다"고 말한다.
 2. 예측을 말할 때는 get_accuracy로 얼마나 믿을 만한지와 한계도 함께 말한다. 예측 방법이나 외부 지표에 대한 질문도
    get_accuracy를 불러 답한다. 정확도·방법 문장은 줄이거나 바꿔 말하지 말고 도구 문장을 그대로 인용한다
@@ -351,7 +356,8 @@ async def ask(question, approve=ask_human, log=OUT / "agent_log.jsonl"):
                     runner = agent.clone(tools=[get_forecast, get_accuracy, calculate])
                     note = " 확정 요청은 이미 처리됐다: " + " / ".join(ledger.published)
                 prompt = (f"{question}\n\n(직전 답은 도구 결과에 없는 숫자 {', '.join(str(b[0]) for b in bad)} 때문에 막혔다. "
-                          f"도구가 준 숫자를 표기 그대로만 써서 다시 답하라.{note})")
+                          "도구가 준 숫자를 단위까지 표기 그대로만 써서 다시 답하라. 합이나 차가 필요하면 calculate를 부르고, "
+                          f"그 밖의 계산값은 쓰지 마라.{note})")
     except Exception as e:
         entry["error"] = type(e).__name__
         raise
