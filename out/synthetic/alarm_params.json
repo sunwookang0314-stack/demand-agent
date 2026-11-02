@@ -1,0 +1,30 @@
+{
+ "시장 기준 차이(제안)": {
+  "theta": 0.25,
+  "k": 2,
+  "tune": {
+   "alerts": 93,
+   "matched": 41,
+   "events": 80,
+   "recall": 0.45,
+   "precision": 0.441,
+   "false_per_customer_year": 0.52,
+   "median_delay": 2.0,
+   "f1": 0.445
+  }
+ },
+ "발주만 작년 대비(비교 기준)": {
+  "theta": 0.15,
+  "k": 2,
+  "tune": {
+   "alerts": 201,
+   "matched": 60,
+   "events": 80,
+   "recall": 0.588,
+   "precision": 0.299,
+   "false_per_customer_year": 1.41,
+   "median_delay": 2.0,
+   "f1": 0.396
+  }
+ }
+}
