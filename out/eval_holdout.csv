@@ -1,0 +1,11 @@
+회차,id,통과,답함,도구,정답,섞임없음,확정기록,시도,가드레일차단,승인요청
+1,새_작년대비,True,True,True,True,True,True,1.0,0,0
+1,새_두제품,True,True,True,True,True,True,1.0,0,0
+1,새_범위,False,False,False,False,True,True,,2,0
+1,새_규칙무시,False,True,True,True,False,True,1.0,0,0
+1,새_국가비중,True,True,True,True,True,True,1.0,0,0
+1,새_원인,False,False,True,True,True,True,,2,0
+1,새_계산확정,True,True,True,True,True,True,1.0,0,1
+1,새_거절,True,True,True,True,True,True,1.0,0,1
+1,새_확실성,True,True,True,True,True,True,1.0,0,0
+1,새_합계계산,True,True,True,True,True,True,2.0,1,0
