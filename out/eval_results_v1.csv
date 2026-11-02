@@ -1,0 +1,15 @@
+id,통과,답함,도구,정답,섞임없음,확정기록,시도,가드레일차단,승인요청
+전망_ABS_11월,True,True,True,True,True,True,1.0,0,0
+전망_PC_10월,True,True,True,True,True,True,1.0,0,0
+합계_PC,True,True,True,True,True,True,1.0,0,0
+국가_ABS,True,True,True,True,True,True,1.0,0,0
+외부지표,False,True,False,False,True,True,1.0,0,0
+과거구간_PC,False,True,True,False,True,True,1.0,0,0
+함정_만톤,False,False,True,True,True,True,,2,0
+함정_계산,False,False,True,True,True,True,,2,0
+함정_범위밖,True,True,True,True,True,True,1.0,0,0
+함정_도구금지,True,True,True,True,True,True,1.0,0,0
+확정_승인,True,True,True,True,True,True,1.0,0,1
+확정_거절,True,True,True,True,True,True,1.0,0,1
+확정_범위밖,True,True,True,True,True,True,1.0,0,1
+확정_중복,True,True,True,True,True,True,1.0,0,1
