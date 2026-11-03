@@ -1,0 +1,3 @@
+method,theta,k,alerts,matched,events,recall,precision,false_per_customer_year,median_delay,f1,recall_demand_down,recall_demand_up,recall_destock,recall_destock_q4,recall_restock,inventory_gap_corr
+시장 기준 차이(제안),0.25,2,110,41,67,0.522,0.373,0.69,2.0,0.435,1.0,0.833,0.125,0.357,0.444,0.852
+발주만 작년 대비(비교 기준),0.15,2,212,51,67,0.597,0.241,1.61,2.0,0.343,1.0,0.917,0.375,0.429,0.444,0.852

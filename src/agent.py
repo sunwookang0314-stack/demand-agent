@@ -5,6 +5,10 @@ publish_plan(계획 확정, 사람 승인 필요).
 숫자 원장 가드레일: 최종 답에 나온 숫자가 이번 실행에서 도구가 돌려준 숫자나 질문에 있던 숫자 중에 없으면 답을 막는다.
 그래서 계산·반올림·단위 변환은 에이전트가 하지 않고 도구가 해서 준다.
 한계: 숫자의 출처는 막지만 의미는 막지 못한다(10월 값을 11월 값이라 쓰기, 부호 뒤집기는 통과한다).
+
+경보 원인 에이전트(가상 데이터 data/synthetic, 실제 롯데케미칼 데이터가 아니다): 도구 get_alert·search_memos로
+재고조정 경보 하나를 재고조정 / 실수요 변화 / 판단 보류 중 하나로 판단한다. 인용한 memo_id가 이번 실행에서
+search_memos가 돌려준 것이 아니거나, 메모 없이 단정하거나, 이유에 원장 밖 숫자가 있으면 막는다.
 """
 import asyncio
 import json
@@ -23,6 +27,7 @@ from agents import (Agent, GuardrailFunctionOutput, OutputGuardrailTripwireTrigg
                     function_tool, output_guardrail)
 from agents import __version__ as sdk_version
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "out"
@@ -367,7 +372,176 @@ async def ask(question, approve=ask_human, log=OUT / "agent_log.jsonl"):
     return entry
 
 
+# ---- 경보 원인 판단 (가상 데이터 data/synthetic. 실제 롯데케미칼 데이터가 아니다) ----
+# 도구는 경보·발주·시장·메모 파일만 읽는다. 정답(data/synthetic/truth/)은 채점 코드(src/evaluate_cause.py)만 읽는다.
+SYN = ROOT / "data" / "synthetic"
+ALERTS = OUT / "synthetic" / "alerts.csv"
+_MEMO_ID = re.compile(r"(?<![A-Za-z])M\d+")  # 'M045의'처럼 한글이 바로 붙어도 잡는다
+
+
+@dataclass
+class CauseLedger(Ledger):
+    memo_ids: set = field(default_factory=set)  # 이번 실행에서 search_memos가 돌려준 memo_id
+    memo_until: str = ""  # 경보가 뜬 달(경보 달 + 1). 그 뒤 메모는 경보 시점에 없던 것이라 돌려주지 않는다
+
+
+def alert_text(ledger, alert_id, months=6):
+    a = pd.read_csv(ALERTS, dtype=str).set_index("alert_id")
+    if alert_id not in a.index:
+        return f"경보 없음: {alert_id}"
+    r = a.loc[alert_id]
+    o = pd.read_csv(SYN / "orders.csv", parse_dates=["month"]).pivot(index="month", columns="customer", values="order_t")
+    mk = pd.read_csv(SYN / "market.csv", parse_dates=["month"]).set_index("month")["market_t"]
+    expect = o.div(mk, axis=0).shift(4).rolling(12, min_periods=8).median().mul(mk, axis=0)  # inventory_alarm.gaps()와 같은 식
+    m, c, gap = pd.Timestamp(r["month"] + "-01"), r["customer"], float(r["gap_pct"])
+    ledger.memo_until = f"{m + pd.DateOffset(months=1):%Y-%m}"
+    lines = [f"경보 {alert_id}: 고객 {c}, {r['month']} 발주가 시장 기준 기대치보다 {_p(abs(gap))} "
+             f"{'적음' if gap < 0 else '많음'}(방향 {r['direction']}). 같은 방향으로 {r['run_months']}달째. "
+             f"같은 달 같은 방향 경보가 난 고객 {r['same_month']}곳.",
+             f"시장 자료가 한 달 늦게 나와서 경보는 {ledger.memo_until}에 떴다. 메모 검색 범위: "
+             f"{m - pd.DateOffset(months=12):%Y-%m}~{ledger.memo_until}(경보 달 12개월 전부터 경보가 뜬 달까지).",
+             f"{c} 최근 {months}개월(기대치 = 시장 x 이 고객의 평소 비중, 평소 비중 = 4~15달 전 12달의 발주/시장 비율 중앙값):"]
+    for t in o.index[(o.index > m - pd.DateOffset(months=months)) & (o.index <= m)]:
+        q, e = o.loc[t, c], expect.loc[t, c]
+        exp = "기대치 계산 전" if pd.isna(e) else f"기대치 {_t(e)}({_p(abs(q / e - 1))} {'적음' if q < e else '많음'})"
+        lines.append(f"- {t:%Y-%m}: 발주 {_t(q)}, {exp}, 시장 {_t(mk[t])}")
+    return "\n".join(lines)
+
+
+def memos_text(ledger, customer, from_month, to_month):
+    """그 고객의 메모와 시장 전반 메모(customer가 '시장'인 줄)를 기간으로 찾는다. 돌려준 memo_id만 인용할 수 있다."""
+    try:
+        lo, hi = pd.Period(from_month, "M"), pd.Period(to_month, "M")
+    except ValueError:
+        return "검색 실패: 달은 YYYY-MM 형식이어야 한다."
+    note = ""
+    if ledger.memo_until and hi > pd.Period(ledger.memo_until, "M"):
+        hi, note = pd.Period(ledger.memo_until, "M"), f"(경보가 뜬 {ledger.memo_until} 뒤 메모는 뺌)"
+    m = pd.read_csv(SYN / "memos.csv", dtype=str)
+    p = pd.PeriodIndex(m["date"].str[:7], freq="M")
+    m = m[(p >= lo) & (p <= hi) & m["customer"].isin([customer, "시장"])]
+    ledger.memo_ids |= set(m["memo_id"])
+    lines = [f"{customer}·시장 전반 메모 {lo}~{hi}{note}: {len(m)}건"]
+    lines += [f"- {r.memo_id} {r.date} [{r.customer}] {r.text}" for r in m.itertuples()]
+    return record(ledger, "\n".join(lines))
+
+
+@function_tool
+def get_alert(ctx: RunContextWrapper[CauseLedger], alert_id: str) -> str:
+    """재고조정 경보 하나의 고객·달·방향·기대치 대비 차이·같은 방향으로 이어진 달 수·같은 달 경보 고객 수와,
+    그 고객의 최근 6개월 발주·시장 기준 기대치를 돌려준다.
+
+    Args:
+        alert_id: 경보 번호(예: A045).
+    """
+    return record(ctx.context, alert_text(ctx.context, alert_id))
+
+
+@function_tool
+def search_memos(ctx: RunContextWrapper[CauseLedger], customer: str, from_month: str, to_month: str) -> str:
+    """영업 메모에서 그 고객의 메모와 시장 전반 메모를 기간으로 찾아 memo_id·날짜·원문을 돌려준다.
+
+    Args:
+        customer: 고객 코드(예: C07).
+        from_month: 시작 달, YYYY-MM.
+        to_month: 끝 달, YYYY-MM.
+    """
+    return memos_text(ctx.context, customer, from_month, to_month)
+
+
+class CauseVerdict(BaseModel):
+    cause: Literal["재고조정", "실수요 변화", "판단 보류"]
+    memo_ids: list[str] = Field(description="판단 근거로 쓴 메모의 memo_id. search_memos가 돌려준 것만")
+    estimate: Literal["재고조정", "실수요 변화", "없음"] = Field(
+        description="판단 보류일 때 메모 없이 같은 달 경보 고객 수 같은 패턴만으로 짐작한 원인(근거 없는 추정). 단정했거나 짐작도 없으면 없음")
+    reason: str = Field(description="한두 문장 이유")
+
+
+def cause_problems(ledger, v):
+    """원인 판단을 막을 이유: 이유 문장의 원장 밖 숫자, search_memos가 돌려주지 않은 memo_id, 메모 근거 없는 단정."""
+    return {"unverified": [str(b) for b in unverified(ledger, v.reason)],
+            "fake_memo_ids": sorted((set(v.memo_ids) | set(_MEMO_ID.findall(v.reason))) - ledger.memo_ids),
+            "no_memo": v.cause != "판단 보류" and not v.memo_ids}
+
+
+@output_guardrail
+async def cause_checks(ctx: RunContextWrapper[CauseLedger], agent: Agent, output: CauseVerdict) -> GuardrailFunctionOutput:
+    p = cause_problems(ctx.context, output)
+    return GuardrailFunctionOutput(output_info=p, tripwire_triggered=any(p.values()))
+
+
+CAUSE_INSTRUCTIONS = """너는 롯데케미칼 첨단소재 수요계획 담당자를 돕는 에이전트다. 고객사 발주가 시장 기준 기대치에서
+벌어졌다는 경보 하나를 받아 원인을 판단한다.
+순서: get_alert로 경보를 본 뒤, get_alert가 알려 준 메모 검색 범위 그대로 search_memos로 그 고객의 메모를 찾는다.
+판단(cause):
+- 재고조정: 메모가 고객의 생산·판매(실제 사용량)는 그대로인데 재고를 줄이거나 늘리려고 발주를 바꿨다고 말한다.
+  보통 몇 달 안에 끝나고, 끝난 직후 한두 달은 재고를 다시 채우거나 쌓은 재고를 쓰느라 반대 방향으로 벌어질 수 있다. 이것도 재고조정이다.
+- 실수요 변화: 메모가 고객의 생산·판매 자체가 늘거나 줄었다고 말한다. 몇 달에서 1년 가까이 이어질 수 있고,
+  끝난 직후 한두 달의 반대 방향 경보도 실수요 변화다.
+- 판단 보류: 원인을 말하는 메모가 없거나, 물량이 달라질 수 있다고만 하고 이유를 말하지 않거나,
+  단가·품질·납기·샘플·담당자 교체처럼 물량 원인과 상관없는 메모뿐일 때.
+규칙:
+1. 재고조정이나 실수요 변화로 단정하려면 그 원인을 직접 말하는 메모가 있어야 하고, 그 memo_id를 memo_ids에 넣는다.
+   search_memos가 돌려준 memo_id만 쓴다.
+2. 메모가 말하는 일이 위 기간으로 볼 때 경보 달에도 이어지고 있거나 끝난 직후여야 근거다.
+   1년 전 연말처럼 끝난 지 오래된 다른 때의 일은 근거가 아니다. 방향도 맞아야 한다. 재고를 줄인다는 메모인데
+   경보는 발주가 늘었다면, 그 일이 끝난 직후의 되돌림이 아닌 한 근거가 아니다.
+3. 같은 달 여러 고객이 같은 방향으로 벌어졌다는 패턴은 근거가 아니다. 패턴만으로 짐작이 가면 cause는 판단 보류로 두고
+   estimate에 짐작한 원인을 적고, reason에 '근거 없는 추정'이라고 밝힌다. 짐작도 없으면 estimate는 없음.
+4. reason은 한국어 한두 문장. 숫자는 도구가 준 표기 그대로만 쓰고 계산하지 않는다."""
+
+cause_agent = Agent[CauseLedger](name="경보 원인 에이전트", instructions=CAUSE_INSTRUCTIONS, model=MODEL,
+                                 tools=[get_alert, search_memos], output_type=CauseVerdict,
+                                 output_guardrails=[cause_checks])
+
+
+def verdict_text(v):
+    guess = f"(근거 없는 추정: {v['estimate']})" if v["cause"] == "판단 보류" and v["estimate"] != "없음" else ""
+    return f"판단: {v['cause']}{guess} / 근거 메모: {', '.join(v['memo_ids']) or '없음'} / 이유: {v['reason']}"
+
+
+async def judge(alert_id, log=OUT / "synthetic" / "agent_log.jsonl"):
+    """경보 하나의 원인을 판단한다. ask()처럼 가드레일에 걸리면 걸린 이유를 알려 주고 한 번만 다시 시키고,
+    오류가 나도 기록은 남긴다. 원장(돌려준 memo_id 포함)은 두 시도에 걸쳐 유지한다."""
+    entry = {"at": datetime.now().isoformat(timespec="seconds"), "model": MODEL, "sdk": sdk_version,
+             "alert_id": alert_id, "blocked": [], "answer": None}
+    task = f"경보 {alert_id}의 원인을 판단하라."
+    ledger = CauseLedger()
+    note_question(ledger, task)
+    prompt = task
+    try:
+        for attempt in (1, 2):
+            try:
+                result = await Runner.run(cause_agent, prompt, context=ledger)
+                calls = [i.raw_item for i in result.new_items if i.type == "tool_call_item"]
+                entry |= {"answer": result.final_output.model_dump(), "attempts": attempt,
+                          "tools": [f"{c.name} {c.arguments}" for c in calls]}
+                break
+            except OutputGuardrailTripwireTriggered as e:
+                p = e.guardrail_result.output.output_info
+                entry["blocked"].append({"answer": e.guardrail_result.agent_output.model_dump(), **p})
+                why = ([f"도구 결과에 없는 숫자 {', '.join(p['unverified'])}"] * bool(p["unverified"])
+                       + [f"search_memos가 돌려주지 않은 memo_id {', '.join(p['fake_memo_ids'])}"] * bool(p["fake_memo_ids"])
+                       + ["원인을 말하는 메모 없이 단정"] * p["no_memo"])
+                prompt = (f"{task}\n\n(직전 답은 막혔다: {'; '.join(why)}. search_memos가 돌려준 memo_id만 인용하고, "
+                          "원인을 말하는 메모가 없으면 판단 보류로 답하라. 숫자는 도구가 준 표기 그대로만 써라.)")
+    except Exception as e:
+        entry["error"] = type(e).__name__
+        raise
+    finally:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return entry
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and re.fullmatch(r"A\d+", sys.argv[1]):  # python src/agent.py A045 -> 경보 원인 판단
+        e = asyncio.run(judge(sys.argv[1]))
+        for b in e["blocked"]:
+            print(f"\n[가드레일 차단] {b}")
+        print("\n" + (verdict_text(e["answer"]) if e["answer"] else "답을 내지 못했다(가드레일 두 번 차단)."))
+        sys.exit()
     e = asyncio.run(ask(" ".join(sys.argv[1:]) or input("질문: ")))
     for b in e["blocked"]:
         print(f"\n[가드레일 차단] 도구에 없는 숫자 {b['unverified']}")
